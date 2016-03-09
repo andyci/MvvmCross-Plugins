@@ -19,13 +19,14 @@ using MvvmCross.Platform.Exceptions;
 using MvvmCross.Platform;
 using MvvmCross.Platform.Platform;
 using Uri = Android.Net.Uri;
+using Android.Database;
 
 namespace MvvmCross.Plugins.PictureChooser.Droid
 {
     public class MvxPictureChooserTask
         : MvxAndroidTask
           , IMvxPictureChooserTask
-          
+
     {
         private Uri _cachedUriLocation;
         private RequestParameters _currentRequestParameters;
@@ -187,8 +188,8 @@ namespace MvvmCross.Plugins.PictureChooser.Droid
 
         private Bitmap LoadScaledBitmap(Uri uri)
         {
-            ContentResolver contentResolver = Mvx.Resolve<IMvxAndroidGlobals>().ApplicationContext.ContentResolver;
-            var maxDimensionSize = GetMaximumDimension(contentResolver, uri);
+            var context = Mvx.Resolve<IMvxAndroidGlobals>().ApplicationContext;
+            var maxDimensionSize = GetMaximumDimension(context, uri);
             var sampleSize = (int) Math.Ceiling((maxDimensionSize)/
                                                 ((double) _currentRequestParameters.MaxPixelDimension));
             if (sampleSize < 1)
@@ -203,10 +204,10 @@ namespace MvvmCross.Plugins.PictureChooser.Droid
                 // - it suggests that Android has returned a corrupt image uri
                 return null;
             }
-            var sampled = LoadResampledBitmap(contentResolver, uri, sampleSize);
+            var sampled = LoadResampledBitmap(context, uri, sampleSize);
             try
             {
-                var rotated = ExifRotateBitmap(contentResolver, uri, sampled);
+                var rotated = ExifRotateBitmap(context, uri, sampled);
                 return rotated;
             }
             catch (Exception pokemon)
@@ -216,36 +217,36 @@ namespace MvvmCross.Plugins.PictureChooser.Droid
             }
         }
 
-        private Bitmap LoadResampledBitmap(ContentResolver contentResolver, Uri uri, int sampleSize)
+        private Bitmap LoadResampledBitmap(Context context, Uri uri, int sampleSize)
         {
-            using (var inputStream = contentResolver.OpenInputStream(uri))
+            using (var inputStream = context.ContentResolver.OpenInputStream(uri))
             {
-                var optionsDecode = new BitmapFactory.Options {InSampleSize = sampleSize};
+                var optionsDecode = new BitmapFactory.Options { InSampleSize = sampleSize };
 
                 return BitmapFactory.DecodeStream(inputStream, null, optionsDecode);
             }
         }
 
-        private static int GetMaximumDimension(ContentResolver contentResolver, Uri uri)
+        private static int GetMaximumDimension(Context context, Uri uri)
         {
-            using (var inputStream = contentResolver.OpenInputStream(uri))
+            using (var inputStream = context.ContentResolver.OpenInputStream(uri))
             {
                 var optionsJustBounds = new BitmapFactory.Options
-                    {
-                        InJustDecodeBounds = true
-                    };
+                {
+                    InJustDecodeBounds = true
+                };
                 var metadataResult = BitmapFactory.DecodeStream(inputStream, null, optionsJustBounds);
                 var maxDimensionSize = Math.Max(optionsJustBounds.OutWidth, optionsJustBounds.OutHeight);
                 return maxDimensionSize;
             }
         }
 
-        private Bitmap ExifRotateBitmap(ContentResolver contentResolver, Uri uri, Bitmap bitmap)
+        private Bitmap ExifRotateBitmap(Context context, Uri uri, Bitmap bitmap)
         {
             if (bitmap == null)
                 return null;
 
-            var exif = new Android.Media.ExifInterface(GetRealPathFromUri(contentResolver, uri));
+            var exif = new Android.Media.ExifInterface(GetRealPathFromUri(context, uri));
             var rotation = exif.GetAttributeInt(Android.Media.ExifInterface.TagOrientation, (Int32)Android.Media.Orientation.Normal);
             var rotationInDegrees = ExifToDegrees(rotation);
             if (rotationInDegrees == 0)
@@ -258,15 +259,16 @@ namespace MvvmCross.Plugins.PictureChooser.Droid
             }
         }
 
-        private String GetRealPathFromUri(ContentResolver contentResolver, Uri uri)
+        private String GetRealPathFromUri(Context context, Uri uri)
         {
-            var proj = new String[] { MediaStore.Images.ImageColumns.Data };
-            using (var cursor = contentResolver.Query(uri, proj, null, null, null))
-            {
-                var columnIndex = cursor.GetColumnIndexOrThrow(MediaStore.Images.ImageColumns.Data);
-                cursor.MoveToFirst();
-                return cursor.GetString(columnIndex);
-            }
+            String[] proj = { MediaStore.Images.ImageColumns.Data };
+            CursorLoader loader = new CursorLoader(context, uri, proj, null, null, null);
+            ICursor cursor = (ICursor)loader.LoadInBackground();
+            int columnIndex = cursor.GetColumnIndexOrThrow(MediaStore.Images.ImageColumns.Data);
+            cursor.MoveToFirst();
+            String result = cursor.GetString(columnIndex);
+            cursor.Close();
+            return result;
         }
 
         private static Int32 ExifToDegrees(Int32 exifOrientation)
